@@ -16,6 +16,10 @@ FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_VERSION} AS runtime
 WORKDIR /app
 
 ENV ASPNETCORE_URLS=http://+:8096 \
+    JELLYFIN_DATA_DIR=/config \
+    JELLYFIN_CONFIG_DIR=/config/config \
+    JELLYFIN_CACHE_DIR=/cache \
+    JELLYFIN_LOG_DIR=/config/log \
     JELLYFIN_WEB_DIR=/usr/share/jellyfin/web \
     DOTNET_EnableDiagnostics=0
 
