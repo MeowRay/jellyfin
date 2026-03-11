@@ -16,7 +16,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_VERSION} AS runtime
 WORKDIR /app
 
 ENV ASPNETCORE_URLS=http://+:8096 \
-    JELLYFIN_NOWEBCONTENT=true \
+    JELLYFIN_HOSTWEBCLIENT=false \
     DOTNET_EnableDiagnostics=0
 
 RUN apt-get update \
@@ -26,4 +26,4 @@ RUN apt-get update \
 COPY --from=build /app/publish/ /app/
 
 EXPOSE 8096
-ENTRYPOINT ["./jellyfin"]
+ENTRYPOINT ["./jellyfin", "--nowebclient"]
