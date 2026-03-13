@@ -171,17 +171,25 @@ namespace Emby.Server.Implementations.Library
         {
             var mediaSources = GetStaticMediaSources(item, enablePathSubstitution, user);
 
-            // If file is strm or main media stream is missing, force a metadata refresh with remote probing
-            if (allowMediaProbe && mediaSources[0].Type != MediaSourceType.Placeholder
-                && (item.Path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase)
-                    || (item.MediaType == MediaType.Video && mediaSources[0].MediaStreams.All(i => i.Type != MediaStreamType.Video))
-                    || (item.MediaType == MediaType.Audio && mediaSources[0].MediaStreams.All(i => i.Type != MediaStreamType.Audio))))
+            var isStrm = item.Path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase);
+            var hasMissingPrimaryStream = (item.MediaType == MediaType.Video && mediaSources[0].MediaStreams.All(i => i.Type != MediaStreamType.Video))
+                || (item.MediaType == MediaType.Audio && mediaSources[0].MediaStreams.All(i => i.Type != MediaStreamType.Audio));
+
+            // If file is strm or main media stream is missing, refresh metadata with remote probing.
+            // Keep full refresh for missing streams, but avoid full refresh on every .strm playback.
+            if (allowMediaProbe
+                && mediaSources[0].Type != MediaSourceType.Placeholder
+                && (isStrm || hasMissingPrimaryStream))
             {
+                var refreshMode = hasMissingPrimaryStream
+                    ? MetadataRefreshMode.FullRefresh
+                    : MetadataRefreshMode.Default;
+
                 await item.RefreshMetadata(
                     new MetadataRefreshOptions(_directoryService)
                     {
                         EnableRemoteContentProbe = true,
-                        MetadataRefreshMode = MetadataRefreshMode.FullRefresh
+                        MetadataRefreshMode = refreshMode
                     },
                     cancellationToken).ConfigureAwait(false);
 
