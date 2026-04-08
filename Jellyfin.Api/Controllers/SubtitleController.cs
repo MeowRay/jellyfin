@@ -262,7 +262,7 @@ public class SubtitleController : BaseJellyfinApiController
             }
         }
 
-        var subtitleStream = await EncodeSubtitles(
+        var encodedSubtitleStream = await EncodeSubtitles(
             itemId.Value,
             mediaSourceId,
             index.Value,
@@ -274,11 +274,11 @@ public class SubtitleController : BaseJellyfinApiController
         if (string.Equals(format, "ass", StringComparison.OrdinalIgnoreCase)
             && IsAndroidTvSubtitleRequest(User.GetClient(), User.GetDevice(), Request.Headers["User-Agent"].ToString()))
         {
-            subtitleStream = await ApplyAndroidTvAssFontFallbackAsync(subtitleStream).ConfigureAwait(false);
+            encodedSubtitleStream = await ApplyAndroidTvAssFontFallbackAsync(encodedSubtitleStream).ConfigureAwait(false);
         }
 
         return File(
-            subtitleStream,
+            encodedSubtitleStream,
             MimeTypes.GetMimeType("file." + format));
     }
 
