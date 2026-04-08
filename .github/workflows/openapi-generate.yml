@@ -1,6 +1,17 @@
 name: OpenAPI Generate
 
 on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        required: true
+        type: string
+      repository:
+        required: true
+        type: string
+      artifact:
+        required: true
+        type: string
   workflow_call:
     inputs:
       ref:

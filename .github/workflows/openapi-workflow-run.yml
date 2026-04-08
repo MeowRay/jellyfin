@@ -1,11 +1,7 @@
 name: OpenAPI Report
 
 on:
-  workflow_run:
-    workflows:
-    - OpenAPI Check
-    types:
-    - completed
+  workflow_dispatch:
 
 jobs:
   metadata:

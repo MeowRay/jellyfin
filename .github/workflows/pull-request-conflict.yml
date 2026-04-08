@@ -1,11 +1,7 @@
 name: Merge Conflict Labeler
 
 on:
-  push:
-    branches:
-      - master
-  pull_request:
-  issue_comment:
+  workflow_dispatch:
 
 permissions: {}
 jobs:

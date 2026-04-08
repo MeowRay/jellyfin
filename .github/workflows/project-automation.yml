@@ -1,11 +1,7 @@
 name: Project Automation
 
 on:
-  push:
-    branches:
-      - master
-  pull_request:
-  issue_comment:
+  workflow_dispatch:
 
 permissions: {}
 jobs:

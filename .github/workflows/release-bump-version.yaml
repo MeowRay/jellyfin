@@ -1,9 +1,6 @@
 name: '🆙 Auto bump_version'
 
 on:
-  release:
-    types:
-      - published
   workflow_dispatch:
     inputs:
       TAG_BRANCH:
