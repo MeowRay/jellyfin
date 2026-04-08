@@ -517,7 +517,7 @@ public class SubtitleController : BaseJellyfinApiController
             var line = ReplaceAssInlineFontOverrides(lines[i]);
             var trimmedLine = line.TrimStart();
 
-            if (trimmedLine.StartsWith("[", StringComparison.Ordinal))
+            if (trimmedLine.StartsWith('['))
             {
                 inStyleSection = trimmedLine.StartsWith("[V4+ Styles]", StringComparison.OrdinalIgnoreCase)
                     || trimmedLine.StartsWith("[V4 Styles]", StringComparison.OrdinalIgnoreCase);
