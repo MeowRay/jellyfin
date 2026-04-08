@@ -262,15 +262,23 @@ public class SubtitleController : BaseJellyfinApiController
             }
         }
 
+        var subtitleStream = await EncodeSubtitles(
+            itemId.Value,
+            mediaSourceId,
+            index.Value,
+            format,
+            startPositionTicks,
+            endPositionTicks,
+            copyTimestamps).ConfigureAwait(false);
+
+        if (string.Equals(format, "ass", StringComparison.OrdinalIgnoreCase)
+            && IsAndroidTvSubtitleRequest(User.GetClient(), User.GetDevice(), Request.Headers["User-Agent"].ToString()))
+        {
+            subtitleStream = await ApplyAndroidTvAssFontFallbackAsync(subtitleStream).ConfigureAwait(false);
+        }
+
         return File(
-            await EncodeSubtitles(
-                itemId.Value,
-                mediaSourceId,
-                index.Value,
-                format,
-                startPositionTicks,
-                endPositionTicks,
-                copyTimestamps).ConfigureAwait(false),
+            subtitleStream,
             MimeTypes.GetMimeType("file." + format));
     }
 
@@ -488,6 +496,44 @@ public class SubtitleController : BaseJellyfinApiController
             copyTimestamps,
             CancellationToken.None);
     }
+
+    internal static bool IsAndroidTvSubtitleRequest(string? client, string? device, string? userAgent)
+        => ContainsAndroidTv(client)
+            || ContainsAndroidTv(device)
+            || ContainsAndroidTv(userAgent);
+
+    internal static string ApplyAndroidTvAssFontFallback(string subtitleText)
+        => subtitleText.Replace(",Arial Unicode MS,", ",sans-serif,", StringComparison.Ordinal);
+
+    private static async Task<Stream> ApplyAndroidTvAssFontFallbackAsync(Stream subtitleStream)
+    {
+        await using (subtitleStream.ConfigureAwait(false))
+        {
+            if (subtitleStream.CanSeek)
+            {
+                subtitleStream.Position = 0;
+            }
+
+            using var reader = new StreamReader(subtitleStream, true);
+            var subtitleText = await reader.ReadToEndAsync().ConfigureAwait(false);
+            var updatedText = ApplyAndroidTvAssFontFallback(subtitleText);
+
+            var outputStream = new MemoryStream();
+            using (var writer = new StreamWriter(outputStream, reader.CurrentEncoding, leaveOpen: true))
+            {
+                await writer.WriteAsync(updatedText).ConfigureAwait(false);
+                await writer.FlushAsync().ConfigureAwait(false);
+            }
+
+            outputStream.Position = 0;
+            return outputStream;
+        }
+    }
+
+    private static bool ContainsAndroidTv(string? value)
+        => !string.IsNullOrWhiteSpace(value)
+            && (value.Contains("android tv", StringComparison.OrdinalIgnoreCase)
+                || value.Contains("androidtv", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Gets a list of available fallback font files.
