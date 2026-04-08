@@ -38,6 +38,27 @@ Style: Title,华康少女文字W5(P),20,&H00FFFFFF
     }
 
     [Fact]
+    public void ApplyAndroidTvAssFontFallback_NormalizesPopSubStyleEncodingAndStyleReference()
+    {
+        const string subtitleText = """
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,方正准圆_GBK,45,&H00FFFFFF,&HF0000000,&H00EA1E0D,&HF0000000,-1,0,0,0,100,100,0,0.00,1,1,0,2,30,30,10,1
+
+[Events]
+Format: Layer, Start, End, Style, Actor, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:02.93,0:00:03.35,*Default,NTP,0000,0000,0000,,大哥
+""";
+
+        var updatedText = SubtitleController.ApplyAndroidTvAssFontFallback(subtitleText);
+
+        Assert.Contains("Style: Default,sans-serif,45", updatedText);
+        Assert.Contains(",30,30,10,134", updatedText);
+        Assert.Contains("Dialogue: 0,0:00:02.93,0:00:03.35,Default,NTP", updatedText);
+        Assert.DoesNotContain("*Default", updatedText);
+    }
+
+    [Fact]
     public void ApplyAndroidTvAssFontFallback_RewritesInlineFnOverridesToSansSerif()
     {
         const string subtitleText = """

@@ -42,6 +42,7 @@ namespace Jellyfin.Api.Controllers;
 public class SubtitleController : BaseJellyfinApiController
 {
     private const string AndroidTvAssFallbackFont = "sans-serif";
+    private const string AndroidTvChineseEncoding = "134";
     private static readonly Regex AssFontOverrideRegex = new(@"\\fn(?<font>[^\\}]+)", RegexOptions.Compiled, TimeSpan.FromSeconds(1));
     private readonly IServerConfigurationManager _serverConfigurationManager;
     private readonly ILibraryManager _libraryManager;
@@ -510,7 +511,10 @@ public class SubtitleController : BaseJellyfinApiController
         var newline = subtitleText.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
         var lines = subtitleText.Split(new[] { newline }, StringSplitOptions.None);
         bool inStyleSection = false;
+        bool inEventsSection = false;
         int fontNameIndex = -1;
+        int encodingIndex = -1;
+        int eventStyleIndex = -1;
 
         for (int i = 0; i < lines.Length; i++)
         {
@@ -521,27 +525,52 @@ public class SubtitleController : BaseJellyfinApiController
             {
                 inStyleSection = trimmedLine.StartsWith("[V4+ Styles]", StringComparison.OrdinalIgnoreCase)
                     || trimmedLine.StartsWith("[V4 Styles]", StringComparison.OrdinalIgnoreCase);
+                inEventsSection = trimmedLine.StartsWith("[Events]", StringComparison.OrdinalIgnoreCase);
                 fontNameIndex = -1;
+                encodingIndex = -1;
+                eventStyleIndex = -1;
                 lines[i] = line;
                 continue;
             }
 
-            if (!inStyleSection)
+            if (inStyleSection)
             {
-                lines[i] = line;
-                continue;
+                if (trimmedLine.StartsWith("Format:", StringComparison.OrdinalIgnoreCase))
+                {
+                    fontNameIndex = GetAssFieldIndex(trimmedLine, "Fontname");
+                    encodingIndex = GetAssFieldIndex(trimmedLine, "Encoding");
+                    lines[i] = line;
+                    continue;
+                }
+
+                if ((fontNameIndex >= 0 || encodingIndex >= 0) && trimmedLine.StartsWith("Style:", StringComparison.OrdinalIgnoreCase))
+                {
+                    lines[i] = ReplaceAssStyleDefinition(line, fontNameIndex, encodingIndex);
+                    continue;
+                }
             }
 
-            if (trimmedLine.StartsWith("Format:", StringComparison.OrdinalIgnoreCase))
+            if (inEventsSection)
             {
-                fontNameIndex = GetAssFontNameIndex(trimmedLine);
-                lines[i] = line;
-                continue;
+                if (trimmedLine.StartsWith("Format:", StringComparison.OrdinalIgnoreCase))
+                {
+                    eventStyleIndex = GetAssFieldIndex(trimmedLine, "Style");
+                    lines[i] = line;
+                    continue;
+                }
+
+                if (eventStyleIndex >= 0
+                    && (trimmedLine.StartsWith("Dialogue:", StringComparison.OrdinalIgnoreCase)
+                        || trimmedLine.StartsWith("Comment:", StringComparison.OrdinalIgnoreCase)))
+                {
+                    lines[i] = NormalizeAssEventStyleName(line, eventStyleIndex);
+                    continue;
+                }
             }
 
-            if (fontNameIndex >= 0 && trimmedLine.StartsWith("Style:", StringComparison.OrdinalIgnoreCase))
+            if (!inStyleSection && !inEventsSection)
             {
-                lines[i] = ReplaceAssStyleFontName(line, fontNameIndex);
+                lines[i] = line;
                 continue;
             }
 
@@ -581,7 +610,7 @@ public class SubtitleController : BaseJellyfinApiController
             && (value.Contains("android tv", StringComparison.OrdinalIgnoreCase)
                 || value.Contains("androidtv", StringComparison.OrdinalIgnoreCase));
 
-    private static int GetAssFontNameIndex(string formatLine)
+    private static int GetAssFieldIndex(string formatLine, string fieldName)
     {
         var separatorIndex = formatLine.IndexOf(':', StringComparison.Ordinal);
         if (separatorIndex < 0)
@@ -592,7 +621,7 @@ public class SubtitleController : BaseJellyfinApiController
         var fields = formatLine[(separatorIndex + 1)..].Split(',', StringSplitOptions.TrimEntries);
         for (int i = 0; i < fields.Length; i++)
         {
-            if (string.Equals(fields[i], "Fontname", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(fields[i], fieldName, StringComparison.OrdinalIgnoreCase))
             {
                 return i;
             }
@@ -601,7 +630,7 @@ public class SubtitleController : BaseJellyfinApiController
         return -1;
     }
 
-    private static string ReplaceAssStyleFontName(string line, int fontNameIndex)
+    private static string ReplaceAssStyleDefinition(string line, int fontNameIndex, int encodingIndex)
     {
         var separatorIndex = line.IndexOf(':', StringComparison.Ordinal);
         if (separatorIndex < 0)
@@ -614,13 +643,45 @@ public class SubtitleController : BaseJellyfinApiController
         int leadingWhitespaceLength = body.Length - body.TrimStart().Length;
         var leadingWhitespace = body[..leadingWhitespaceLength];
         var fields = body.TrimStart().Split(',', StringSplitOptions.None);
+        bool fontReplaced = false;
 
-        if (fontNameIndex >= fields.Length || IsAndroidSafeAssFont(fields[fontNameIndex]))
+        if (fontNameIndex >= 0 && fontNameIndex < fields.Length && !IsAndroidSafeAssFont(fields[fontNameIndex]))
+        {
+            fields[fontNameIndex] = AndroidTvAssFallbackFont;
+            fontReplaced = true;
+        }
+
+        if (fontReplaced
+            && encodingIndex >= 0
+            && encodingIndex < fields.Length
+            && IsAndroidProblematicEncoding(fields[encodingIndex]))
+        {
+            fields[encodingIndex] = AndroidTvChineseEncoding;
+        }
+
+        return prefix + leadingWhitespace + string.Join(",", fields);
+    }
+
+    private static string NormalizeAssEventStyleName(string line, int eventStyleIndex)
+    {
+        var separatorIndex = line.IndexOf(':', StringComparison.Ordinal);
+        if (separatorIndex < 0)
         {
             return line;
         }
 
-        fields[fontNameIndex] = AndroidTvAssFallbackFont;
+        var prefix = line[..(separatorIndex + 1)];
+        var body = line[(separatorIndex + 1)..];
+        int leadingWhitespaceLength = body.Length - body.TrimStart().Length;
+        var leadingWhitespace = body[..leadingWhitespaceLength];
+        var fields = body.TrimStart().Split(',', eventStyleIndex + 2, StringSplitOptions.None);
+
+        if (eventStyleIndex >= fields.Length)
+        {
+            return line;
+        }
+
+        fields[eventStyleIndex] = fields[eventStyleIndex].TrimStart('*');
         return prefix + leadingWhitespace + string.Join(",", fields);
     }
 
@@ -640,6 +701,10 @@ public class SubtitleController : BaseJellyfinApiController
         => string.Equals(fontName.Trim(), AndroidTvAssFallbackFont, StringComparison.OrdinalIgnoreCase)
             || string.Equals(fontName.Trim(), "serif", StringComparison.OrdinalIgnoreCase)
             || string.Equals(fontName.Trim(), "monospace", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsAndroidProblematicEncoding(string encoding)
+        => string.Equals(encoding.Trim(), "0", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(encoding.Trim(), "1", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Gets a list of available fallback font files.
