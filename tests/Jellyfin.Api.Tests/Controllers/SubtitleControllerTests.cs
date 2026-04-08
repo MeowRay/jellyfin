@@ -21,17 +21,48 @@ public class SubtitleControllerTests
     }
 
     [Fact]
-    public void ApplyAndroidTvAssFontFallback_RewritesArialUnicodeMsToSansSerif()
+    public void ApplyAndroidTvAssFontFallback_RewritesAssStyleFontsToSansSerif()
     {
         const string subtitleText = """
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour
-Style: Default,Arial Unicode MS,20,&H00FFFFFF
+Style: Default,方正准圆_GBK,20,&H00FFFFFF
+Style: Title,华康少女文字W5(P),20,&H00FFFFFF
 """;
 
         var updatedText = SubtitleController.ApplyAndroidTvAssFontFallback(subtitleText);
 
-        Assert.DoesNotContain("Arial Unicode MS", updatedText);
-        Assert.Contains(",sans-serif,", updatedText);
+        Assert.DoesNotContain("方正准圆_GBK", updatedText);
+        Assert.DoesNotContain("华康少女文字W5(P)", updatedText);
+        Assert.Equal(2, CountOccurrences(updatedText, ",sans-serif,"));
+    }
+
+    [Fact]
+    public void ApplyAndroidTvAssFontFallback_RewritesInlineFnOverridesToSansSerif()
+    {
+        const string subtitleText = """
+[Events]
+Format: Layer, Start, End, Style, Actor, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:01.00,0:00:02.00,Default,NTP,0000,0000,0000,,{\fn方正准圆_GBK}你好
+""";
+
+        var updatedText = SubtitleController.ApplyAndroidTvAssFontFallback(subtitleText);
+
+        Assert.DoesNotContain(@"\fn方正准圆_GBK", updatedText);
+        Assert.Contains(@"\fnsans-serif", updatedText);
+    }
+
+    private static int CountOccurrences(string text, string value)
+    {
+        int count = 0;
+        int index = 0;
+
+        while ((index = text.IndexOf(value, index, System.StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += value.Length;
+        }
+
+        return count;
     }
 }

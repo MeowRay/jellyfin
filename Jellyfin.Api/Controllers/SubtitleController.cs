@@ -8,6 +8,7 @@ using System.Linq;
 using System.Net.Mime;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Api.Attributes;
@@ -40,6 +41,8 @@ namespace Jellyfin.Api.Controllers;
 [Route("")]
 public class SubtitleController : BaseJellyfinApiController
 {
+    private const string AndroidTvAssFallbackFont = "sans-serif";
+    private static readonly Regex AssFontOverrideRegex = new(@"\\fn(?<font>[^\\}]+)", RegexOptions.Compiled, TimeSpan.FromSeconds(1));
     private readonly IServerConfigurationManager _serverConfigurationManager;
     private readonly ILibraryManager _libraryManager;
     private readonly ISubtitleManager _subtitleManager;
@@ -503,7 +506,50 @@ public class SubtitleController : BaseJellyfinApiController
             || ContainsAndroidTv(userAgent);
 
     internal static string ApplyAndroidTvAssFontFallback(string subtitleText)
-        => subtitleText.Replace(",Arial Unicode MS,", ",sans-serif,", StringComparison.Ordinal);
+    {
+        var newline = subtitleText.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+        var lines = subtitleText.Split(new[] { newline }, StringSplitOptions.None);
+        bool inStyleSection = false;
+        int fontNameIndex = -1;
+
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var line = ReplaceAssInlineFontOverrides(lines[i]);
+            var trimmedLine = line.TrimStart();
+
+            if (trimmedLine.StartsWith("[", StringComparison.Ordinal))
+            {
+                inStyleSection = trimmedLine.StartsWith("[V4+ Styles]", StringComparison.OrdinalIgnoreCase)
+                    || trimmedLine.StartsWith("[V4 Styles]", StringComparison.OrdinalIgnoreCase);
+                fontNameIndex = -1;
+                lines[i] = line;
+                continue;
+            }
+
+            if (!inStyleSection)
+            {
+                lines[i] = line;
+                continue;
+            }
+
+            if (trimmedLine.StartsWith("Format:", StringComparison.OrdinalIgnoreCase))
+            {
+                fontNameIndex = GetAssFontNameIndex(trimmedLine);
+                lines[i] = line;
+                continue;
+            }
+
+            if (fontNameIndex >= 0 && trimmedLine.StartsWith("Style:", StringComparison.OrdinalIgnoreCase))
+            {
+                lines[i] = ReplaceAssStyleFontName(line, fontNameIndex);
+                continue;
+            }
+
+            lines[i] = line;
+        }
+
+        return string.Join(newline, lines);
+    }
 
     private static async Task<Stream> ApplyAndroidTvAssFontFallbackAsync(Stream subtitleStream)
     {
@@ -534,6 +580,66 @@ public class SubtitleController : BaseJellyfinApiController
         => !string.IsNullOrWhiteSpace(value)
             && (value.Contains("android tv", StringComparison.OrdinalIgnoreCase)
                 || value.Contains("androidtv", StringComparison.OrdinalIgnoreCase));
+
+    private static int GetAssFontNameIndex(string formatLine)
+    {
+        var separatorIndex = formatLine.IndexOf(':', StringComparison.Ordinal);
+        if (separatorIndex < 0)
+        {
+            return -1;
+        }
+
+        var fields = formatLine[(separatorIndex + 1)..].Split(',', StringSplitOptions.TrimEntries);
+        for (int i = 0; i < fields.Length; i++)
+        {
+            if (string.Equals(fields[i], "Fontname", StringComparison.OrdinalIgnoreCase))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static string ReplaceAssStyleFontName(string line, int fontNameIndex)
+    {
+        var separatorIndex = line.IndexOf(':', StringComparison.Ordinal);
+        if (separatorIndex < 0)
+        {
+            return line;
+        }
+
+        var prefix = line[..(separatorIndex + 1)];
+        var body = line[(separatorIndex + 1)..];
+        int leadingWhitespaceLength = body.Length - body.TrimStart().Length;
+        var leadingWhitespace = body[..leadingWhitespaceLength];
+        var fields = body.TrimStart().Split(',', StringSplitOptions.None);
+
+        if (fontNameIndex >= fields.Length || IsAndroidSafeAssFont(fields[fontNameIndex]))
+        {
+            return line;
+        }
+
+        fields[fontNameIndex] = AndroidTvAssFallbackFont;
+        return prefix + leadingWhitespace + string.Join(",", fields);
+    }
+
+    private static string ReplaceAssInlineFontOverrides(string line)
+        => AssFontOverrideRegex.Replace(line, static match =>
+        {
+            var fontName = match.Groups["font"].Value.Trim();
+            if (IsAndroidSafeAssFont(fontName))
+            {
+                return match.Value;
+            }
+
+            return @"\fn" + AndroidTvAssFallbackFont;
+        });
+
+    private static bool IsAndroidSafeAssFont(string fontName)
+        => string.Equals(fontName.Trim(), AndroidTvAssFallbackFont, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(fontName.Trim(), "serif", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(fontName.Trim(), "monospace", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Gets a list of available fallback font files.
