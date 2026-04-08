@@ -21,6 +21,21 @@ public class SubtitleControllerTests
     }
 
     [Fact]
+    public void IsLegacyPopSubAss_ReturnsTrueForPopSubMarkers()
+    {
+        const string subtitleText = """
+[Script Info]
+; // 此字幕由PopSub生成
+Synch Point:0
+
+[Events]
+Dialogue: 0,0:00:01.00,0:00:02.00,*Default,NTP,0000,0000,0000,,你好
+""";
+
+        Assert.True(SubtitleController.IsLegacyPopSubAss(subtitleText));
+    }
+
+    [Fact]
     public void ApplyAndroidTvAssFontFallback_RewritesAssStyleFontsToSansSerif()
     {
         const string subtitleText = """

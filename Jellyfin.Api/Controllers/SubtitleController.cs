@@ -274,16 +274,36 @@ public class SubtitleController : BaseJellyfinApiController
             startPositionTicks,
             endPositionTicks,
             copyTimestamps).ConfigureAwait(false);
+        var outputFormat = format;
 
         if (string.Equals(format, "ass", StringComparison.OrdinalIgnoreCase)
             && IsAndroidTvSubtitleRequest(User.GetClient(), User.GetDevice(), Request.Headers["User-Agent"].ToString()))
         {
-            encodedSubtitleStream = await ApplyAndroidTvAssFontFallbackAsync(encodedSubtitleStream).ConfigureAwait(false);
+            var subtitleTextData = await ReadSubtitleTextAsync(encodedSubtitleStream).ConfigureAwait(false);
+
+            if (IsLegacyPopSubAss(subtitleTextData.Text))
+            {
+                outputFormat = "srt";
+                encodedSubtitleStream = await EncodeSubtitles(
+                    itemId.Value,
+                    mediaSourceId,
+                    index.Value,
+                    outputFormat,
+                    startPositionTicks,
+                    endPositionTicks,
+                    copyTimestamps).ConfigureAwait(false);
+            }
+            else
+            {
+                encodedSubtitleStream = CreateSubtitleStream(
+                    ApplyAndroidTvAssFontFallback(subtitleTextData.Text),
+                    subtitleTextData.Encoding);
+            }
         }
 
         return File(
             encodedSubtitleStream,
-            MimeTypes.GetMimeType("file." + format));
+            MimeTypes.GetMimeType("file." + outputFormat));
     }
 
     /// <summary>
@@ -506,6 +526,11 @@ public class SubtitleController : BaseJellyfinApiController
             || ContainsAndroidTv(device)
             || ContainsAndroidTv(userAgent);
 
+    internal static bool IsLegacyPopSubAss(string subtitleText)
+        => subtitleText.Contains("PopSub", StringComparison.OrdinalIgnoreCase)
+            || subtitleText.Contains("Synch Point:", StringComparison.OrdinalIgnoreCase)
+            || subtitleText.Contains(",*Default,", StringComparison.Ordinal);
+
     internal static string ApplyAndroidTvAssFontFallback(string subtitleText)
     {
         var newline = subtitleText.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
@@ -580,7 +605,7 @@ public class SubtitleController : BaseJellyfinApiController
         return string.Join(newline, lines);
     }
 
-    private static async Task<Stream> ApplyAndroidTvAssFontFallbackAsync(Stream subtitleStream)
+    private static async Task<(string Text, Encoding Encoding)> ReadSubtitleTextAsync(Stream subtitleStream)
     {
         await using (subtitleStream.ConfigureAwait(false))
         {
@@ -591,18 +616,21 @@ public class SubtitleController : BaseJellyfinApiController
 
             using var reader = new StreamReader(subtitleStream, true);
             var subtitleText = await reader.ReadToEndAsync().ConfigureAwait(false);
-            var updatedText = ApplyAndroidTvAssFontFallback(subtitleText);
-
-            var outputStream = new MemoryStream();
-            using (var writer = new StreamWriter(outputStream, reader.CurrentEncoding, leaveOpen: true))
-            {
-                await writer.WriteAsync(updatedText).ConfigureAwait(false);
-                await writer.FlushAsync().ConfigureAwait(false);
-            }
-
-            outputStream.Position = 0;
-            return outputStream;
+            return (subtitleText, reader.CurrentEncoding);
         }
+    }
+
+    private static Stream CreateSubtitleStream(string subtitleText, Encoding encoding)
+    {
+        var outputStream = new MemoryStream();
+        using (var writer = new StreamWriter(outputStream, encoding, leaveOpen: true))
+        {
+            writer.Write(subtitleText);
+            writer.Flush();
+        }
+
+        outputStream.Position = 0;
+        return outputStream;
     }
 
     private static bool ContainsAndroidTv(string? value)
