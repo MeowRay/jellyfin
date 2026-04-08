@@ -1,8 +1,10 @@
 using System;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Security.Claims;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -36,6 +38,7 @@ namespace Jellyfin.Api.Helpers;
 /// </summary>
 public class MediaInfoHelper
 {
+    private const string AndroidTvLegacyPopSubConvertedSuffix = "[ASS->SRT]";
     private readonly IUserManager _userManager;
     private readonly ILibraryManager _libraryManager;
     private readonly IMediaSourceManager _mediaSourceManager;
@@ -331,7 +334,7 @@ public class MediaInfoHelper
 
             // Do this after the above so that StartPositionTicks is set
             // The token must not be null
-            SetDeviceSpecificSubtitleInfo(streamInfo, mediaSource, claimsPrincipal.GetToken()!);
+            SetDeviceSpecificSubtitleInfo(streamInfo, mediaSource, claimsPrincipal, claimsPrincipal.GetToken()!);
             mediaSource.DefaultAudioStreamIndex = streamInfo.AudioStreamIndex;
         }
 
@@ -467,9 +470,10 @@ public class MediaInfoHelper
         mediaSource.Container = StreamBuilder.NormalizeMediaSourceFormatIntoSingleContainer(mediaSource.Container, profile, type);
     }
 
-    private void SetDeviceSpecificSubtitleInfo(StreamInfo info, MediaSourceInfo mediaSource, string accessToken)
+    private void SetDeviceSpecificSubtitleInfo(StreamInfo info, MediaSourceInfo mediaSource, ClaimsPrincipal claimsPrincipal, string accessToken)
     {
         var profiles = info.GetSubtitleProfiles(_mediaEncoder, false, "-", accessToken);
+        bool isAndroidTv = IsAndroidTvSubtitleRequest(claimsPrincipal.GetClient(), claimsPrincipal.GetDevice());
         mediaSource.DefaultSubtitleStreamIndex = info.SubtitleStreamIndex;
 
         mediaSource.TranscodeReasons = info.TranscodeReasons;
@@ -484,13 +488,146 @@ public class MediaInfoHelper
 
                     if (profile.DeliveryMethod == SubtitleDeliveryMethod.External)
                     {
-                        stream.DeliveryUrl = profile.Url.TrimStart('-');
-                        stream.IsExternalUrl = profile.IsExternalUrl;
+                        if (ShouldUseAndroidTvLegacyPopSubSrtFallback(isAndroidTv, stream))
+                        {
+                            stream.DeliveryUrl = BuildSubtitleDeliveryUrl(
+                                info.ItemId,
+                                info.MediaSourceId,
+                                stream.Index,
+                                info.StartPositionTicks,
+                                "srt",
+                                accessToken);
+                            stream.IsExternalUrl = false;
+                            stream.Codec = "srt";
+                            stream.Title = AppendSubtitleConversionSuffix(stream.Title, AndroidTvLegacyPopSubConvertedSuffix);
+
+                            _logger.LogInformation(
+                                "Using Android TV SRT fallback for legacy PopSub subtitle stream {SubtitleStreamIndex} on media source {MediaSourceId}",
+                                stream.Index,
+                                info.MediaSourceId);
+                        }
+                        else
+                        {
+                            stream.DeliveryUrl = profile.Url.TrimStart('-');
+                            stream.IsExternalUrl = profile.IsExternalUrl;
+                        }
                     }
                 }
             }
         }
     }
+
+    internal static bool IsAndroidTvSubtitleRequest(string? client, string? device)
+        => ContainsAndroidTv(client)
+            || ContainsAndroidTv(device);
+
+    internal static bool IsLegacyPopSubAss(ReadOnlySpan<byte> subtitlePayload)
+    {
+        if (subtitlePayload.IsEmpty)
+        {
+            return false;
+        }
+
+        var subtitleText = Encoding.ASCII.GetString(subtitlePayload);
+        return subtitleText.Contains("PopSub", StringComparison.OrdinalIgnoreCase)
+            || subtitleText.Contains("Synch Point:", StringComparison.OrdinalIgnoreCase)
+            || subtitleText.Contains(",*Default,", StringComparison.Ordinal);
+    }
+
+    internal static string BuildSubtitleDeliveryUrl(
+        Guid itemId,
+        string? mediaSourceId,
+        int subtitleStreamIndex,
+        long startPositionTicks,
+        string format,
+        string? accessToken)
+    {
+        var deliveryUrl = string.Format(
+            CultureInfo.InvariantCulture,
+            "/Videos/{0}/{1}/Subtitles/{2}/{3}/Stream.{4}",
+            itemId,
+            mediaSourceId,
+            subtitleStreamIndex.ToString(CultureInfo.InvariantCulture),
+            startPositionTicks.ToString(CultureInfo.InvariantCulture),
+            format);
+
+        if (!string.IsNullOrEmpty(accessToken))
+        {
+            deliveryUrl += "?ApiKey=" + accessToken;
+        }
+
+        return deliveryUrl;
+    }
+
+    internal static string AppendSubtitleConversionSuffix(string? title, string suffix)
+    {
+        if (string.IsNullOrWhiteSpace(suffix))
+        {
+            return title ?? string.Empty;
+        }
+
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return suffix;
+        }
+
+        return title.Contains(suffix, StringComparison.Ordinal)
+            ? title
+            : string.Concat(title, " ", suffix);
+    }
+
+    private bool ShouldUseAndroidTvLegacyPopSubSrtFallback(bool isAndroidTv, MediaStream stream)
+    {
+        if (!isAndroidTv
+            || !stream.IsExternal
+            || !stream.IsTextSubtitleStream
+            || (!string.Equals(stream.Codec, "ass", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(stream.Codec, "ssa", StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        var subtitlePath = GetLocalSubtitlePath(stream.Path);
+        if (subtitlePath is null || !File.Exists(subtitlePath))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var subtitleStream = File.OpenRead(subtitlePath);
+            var buffer = new byte[(int)Math.Min(subtitleStream.Length, 32 * 1024L)];
+            int bytesRead = subtitleStream.Read(buffer, 0, buffer.Length);
+            return IsLegacyPopSubAss(buffer.AsSpan(0, bytesRead));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Unable to inspect subtitle stream {SubtitleStreamIndex} at {SubtitlePath} for Android TV PopSub fallback", stream.Index, subtitlePath);
+            return false;
+        }
+    }
+
+    private static string? GetLocalSubtitlePath(string? subtitlePath)
+    {
+        if (string.IsNullOrWhiteSpace(subtitlePath))
+        {
+            return null;
+        }
+
+        if (Path.IsPathRooted(subtitlePath))
+        {
+            return subtitlePath;
+        }
+
+        return Uri.TryCreate(subtitlePath, UriKind.Absolute, out Uri? uriResult) && uriResult.IsFile
+            ? uriResult.LocalPath
+            : null;
+    }
+
+    private static bool ContainsAndroidTv(string? value)
+        => !string.IsNullOrWhiteSpace(value)
+            && (value.Contains("android tv", StringComparison.OrdinalIgnoreCase)
+                || value.Contains("androidtv", StringComparison.OrdinalIgnoreCase));
 
     private int? GetMaxBitrate(int? clientMaxBitrate, User user, IPAddress ipAddress)
     {
