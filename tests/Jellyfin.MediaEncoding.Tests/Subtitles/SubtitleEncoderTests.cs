@@ -13,6 +13,7 @@ using MediaBrowser.Controller.MediaEncoding;
 using MediaBrowser.MediaEncoding.Subtitles;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.IO;
 using MediaBrowser.Model.MediaInfo;
 using Microsoft.Extensions.Logging;
 using Moq;
@@ -107,7 +108,7 @@ namespace Jellyfin.MediaEncoding.Subtitles.Tests
         {
             var fixture = new Fixture().Customize(new AutoMoqCustomization { ConfigureMembers = true });
             var subtitleEncoder = fixture.Create<SubtitleEncoder>();
-            var result = await subtitleEncoder.GetReadableFile(mediaSource, subtitleStream, CancellationToken.None);
+            var result = await subtitleEncoder.GetReadableFile(mediaSource, subtitleStream, TestContext.Current.CancellationToken);
             Assert.Equal(subtitleInfo.Path, result.Path);
             Assert.Equal(subtitleInfo.Protocol, result.Protocol);
             Assert.Equal(subtitleInfo.Format, result.Format);
@@ -118,7 +119,10 @@ namespace Jellyfin.MediaEncoding.Subtitles.Tests
         public async Task GetSubtitleFileCharacterSet_HttpMediaSourceWithLocalSubtitle_DoesNotUseHttpClient()
         {
             var subtitlePath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".srt");
-            await File.WriteAllTextAsync(subtitlePath, "1\n00:00:00,000 --> 00:00:01,000\ntest\n");
+            await File.WriteAllTextAsync(
+                subtitlePath,
+                "1\n00:00:00,000 --> 00:00:01,000\ntest\n",
+                TestContext.Current.CancellationToken);
 
             try
             {
@@ -151,7 +155,7 @@ namespace Jellyfin.MediaEncoding.Subtitles.Tests
                     {
                         Protocol = MediaProtocol.Http
                     },
-                    CancellationToken.None);
+                    TestContext.Current.CancellationToken);
 
                 mediaSourceManagerMock.Verify(x => x.GetPathProtocol(subtitlePath), Times.Once);
                 httpClientFactoryMock.Verify(x => x.CreateClient(It.IsAny<string>()), Times.Never);

@@ -40,6 +40,21 @@ namespace MediaBrowser.Controller.Extensions
         public const string FfmpegAnalyzeDurationKey = "FFmpeg:analyzeduration";
 
         /// <summary>
+        /// The key for the FFmpeg fast probe size option.
+        /// </summary>
+        public const string FfmpegFastProbeSizeKey = "FFmpeg:fastProbeSize";
+
+        /// <summary>
+        /// The key for the FFmpeg fast analyze duration option.
+        /// </summary>
+        public const string FfmpegFastAnalyzeDurationKey = "FFmpeg:fastAnalyzeDuration";
+
+        /// <summary>
+        /// The key for the URL prefixes eligible for the FFmpeg fast probe.
+        /// </summary>
+        public const string FfmpegFastProbeUrlPrefixesKey = "FFmpeg:fastProbeUrlPrefixes";
+
+        /// <summary>
         /// The key for the FFmpeg image extraction performance tradeoff option.
         /// </summary>
         public const string FfmpegImgExtractPerfTradeoffKey = "FFmpeg:imgExtractPerfTradeoff";
@@ -98,6 +113,30 @@ namespace MediaBrowser.Controller.Extensions
         /// <returns>The FFmpeg analyze duration option.</returns>
         public static string? GetFFmpegAnalyzeDuration(this IConfiguration configuration)
             => configuration[FfmpegAnalyzeDurationKey];
+
+        /// <summary>
+        /// Gets the FFmpeg fast probe size from the <see cref="IConfiguration" />.
+        /// </summary>
+        /// <param name="configuration">The configuration to read the setting from.</param>
+        /// <returns>The FFmpeg fast probe size option.</returns>
+        public static string? GetFFmpegFastProbeSize(this IConfiguration configuration)
+            => configuration[FfmpegFastProbeSizeKey];
+
+        /// <summary>
+        /// Gets the FFmpeg fast analyze duration from the <see cref="IConfiguration" />.
+        /// </summary>
+        /// <param name="configuration">The configuration to read the setting from.</param>
+        /// <returns>The FFmpeg fast analyze duration option.</returns>
+        public static string? GetFFmpegFastAnalyzeDuration(this IConfiguration configuration)
+            => configuration[FfmpegFastAnalyzeDurationKey];
+
+        /// <summary>
+        /// Gets the URL prefixes eligible for the FFmpeg fast probe from the <see cref="IConfiguration" />.
+        /// </summary>
+        /// <param name="configuration">The configuration to read the setting from.</param>
+        /// <returns>A comma, semicolon, or newline separated list of URL prefixes.</returns>
+        public static string? GetFFmpegFastProbeUrlPrefixes(this IConfiguration configuration)
+            => configuration[FfmpegFastProbeUrlPrefixesKey];
 
         /// <summary>
         /// Gets a value indicating whether the server should validate FFmpeg during startup.

@@ -414,30 +414,124 @@ namespace MediaBrowser.MediaEncoding.Encoder
         }
 
         /// <inheritdoc />
-        public Task<MediaInfo> GetMediaInfo(MediaInfoRequest request, CancellationToken cancellationToken)
+        public async Task<MediaInfo> GetMediaInfo(MediaInfoRequest request, CancellationToken cancellationToken)
         {
             var extractChapters = request.ExtractChapters;
-            var extraArgs = GetExtraArguments(request);
+            var inputArgument = GetInputArgument(request.MediaSource.Path, request.MediaSource);
+            var fastProbeArguments = GetFastProbeArguments(request);
+            if (fastProbeArguments is not null)
+            {
+                try
+                {
+                    var fastResult = await GetMediaInfoInternal(
+                        inputArgument,
+                        request.MediaSource.Path,
+                        request.MediaSource.Protocol,
+                        extractChapters,
+                        fastProbeArguments,
+                        request.MediaType == DlnaProfileType.Audio,
+                        request.MediaSource.VideoType,
+                        cancellationToken).ConfigureAwait(false);
 
-            return GetMediaInfoInternal(
-                GetInputArgument(request.MediaSource.Path, request.MediaSource),
+                    if (IsProbeResultComplete(fastResult, request.MediaType))
+                    {
+                        _logger.LogInformation(
+                            "Fast remote media probe succeeded for {Path} with {StreamCount} streams",
+                            request.MediaSource.Path,
+                            fastResult.MediaStreams?.Count ?? 0);
+                        return fastResult;
+                    }
+
+                    _logger.LogWarning(
+                        "Fast remote media probe returned incomplete media information for {Path}; retrying with default probe limits",
+                        request.MediaSource.Path);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "Fast remote media probe failed for {Path}; retrying with default probe limits",
+                        request.MediaSource.Path);
+                }
+            }
+
+            return await GetMediaInfoInternal(
+                inputArgument,
                 request.MediaSource.Path,
                 request.MediaSource.Protocol,
                 extractChapters,
-                extraArgs,
+                GetExtraArguments(request),
                 request.MediaType == DlnaProfileType.Audio,
                 request.MediaSource.VideoType,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        internal string GetFastProbeArguments(MediaInfoRequest request)
+        {
+            if (request.MediaSource.Protocol != MediaProtocol.Http
+                || string.IsNullOrWhiteSpace(request.MediaSource.Path))
+            {
+                return null;
+            }
+
+            var probeSize = _config.GetFFmpegFastProbeSize();
+            var analyzeDuration = _config.GetFFmpegFastAnalyzeDuration();
+            var configuredPrefixes = _config.GetFFmpegFastProbeUrlPrefixes();
+            if (string.IsNullOrWhiteSpace(probeSize)
+                || string.IsNullOrWhiteSpace(analyzeDuration)
+                || string.IsNullOrWhiteSpace(configuredPrefixes))
+            {
+                return null;
+            }
+
+            var prefixes = configuredPrefixes.Split(
+                [',', ';', '\r', '\n'],
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (!prefixes.Any(prefix => request.MediaSource.Path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+            {
+                return null;
+            }
+
+            return GetExtraArguments(request, analyzeDuration, probeSize);
+        }
+
+        internal static bool IsProbeResultComplete(MediaInfo mediaInfo, DlnaProfileType mediaType)
+        {
+            if (mediaInfo is null
+                || mediaInfo.MediaStreams is null
+                || !mediaInfo.RunTimeTicks.HasValue
+                || mediaInfo.RunTimeTicks.Value <= 0)
+            {
+                return false;
+            }
+
+            var hasAudio = mediaInfo.MediaStreams.Any(stream => stream.Type == MediaStreamType.Audio);
+            if (mediaType == DlnaProfileType.Audio)
+            {
+                return hasAudio;
+            }
+
+            return hasAudio && mediaInfo.MediaStreams.Any(stream => stream.Type == MediaStreamType.Video);
         }
 
         internal string GetExtraArguments(MediaInfoRequest request)
+            => GetExtraArguments(request, null, null);
+
+        private string GetExtraArguments(
+            MediaInfoRequest request,
+            string analyzeDurationOverride,
+            string probeSizeOverride)
         {
-            var ffmpegAnalyzeDuration = _config.GetFFmpegAnalyzeDuration() ?? string.Empty;
-            var ffmpegProbeSize = _config.GetFFmpegProbeSize() ?? string.Empty;
+            var ffmpegAnalyzeDuration = analyzeDurationOverride ?? _config.GetFFmpegAnalyzeDuration() ?? string.Empty;
+            var ffmpegProbeSize = probeSizeOverride ?? _config.GetFFmpegProbeSize() ?? string.Empty;
             var analyzeDuration = string.Empty;
             var extraArgs = string.Empty;
 
-            if (request.MediaSource.AnalyzeDurationMs > 0)
+            if (analyzeDurationOverride is not null)
+            {
+                analyzeDuration = "-analyzeduration " + analyzeDurationOverride;
+            }
+            else if (request.MediaSource.AnalyzeDurationMs > 0)
             {
                 analyzeDuration = "-analyzeduration " + (request.MediaSource.AnalyzeDurationMs * 1000);
             }
