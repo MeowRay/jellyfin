@@ -441,7 +441,19 @@ namespace MediaBrowser.Controller.Entities
                         continue;
                     }
 
-                    if (currentChildren.TryGetValue(child.Id, out BaseItem currentChild))
+                    currentChildren.TryGetValue(child.Id, out BaseItem currentChild);
+                    // General child queries hide alternate versions. A filesystem resolver can
+                    // still return their files as standalone videos, so recover the persisted
+                    // item before treating it as new. Recreating the same ID would overwrite
+                    // PrimaryVersionId, ownership and the presentation key with empty defaults.
+                    if (currentChild is null
+                        && LibraryManager.GetItemById(child.Id) is Video { PrimaryVersionId: not null } existingVersion
+                        && existingVersion.ParentId == Id)
+                    {
+                        currentChild = existingVersion;
+                    }
+
+                    if (currentChild is not null)
                     {
                         validChildren.Add(currentChild);
 
