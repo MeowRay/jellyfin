@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using AutoFixture;
 using AutoFixture.AutoMoq;
 using Castle.Components.DictionaryAdapter;
@@ -13,6 +16,7 @@ using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Library;
 using MediaBrowser.Controller.LiveTv;
 using MediaBrowser.Controller.MediaSegments;
+using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.Globalization;
@@ -280,6 +284,63 @@ namespace Jellyfin.Server.Implementations.Tests.Library
 
             Assert.Equal(primary.Id.ToString("N"), sources[0].Id);
             _mockUserDataManager.Verify(x => x.GetUserDataBatch(It.IsAny<IReadOnlyList<BaseItem>>(), It.IsAny<User>()), Times.Never);
+        }
+
+        [Fact]
+        public async Task GetPlaybackMediaSources_SeesAddedAndRemovedSidecarAcrossRequests()
+        {
+            var directory = Directory.CreateTempSubdirectory("jellyfin-playback-subtitles-");
+            var previousProviderManager = BaseItem.ProviderManager;
+            try
+            {
+                var (primary, _, _) = SetupVersionGroup();
+                primary.Path = Path.Combine(directory.FullName, "episode.strm");
+                var subtitle = Path.Combine(directory.FullName, "episode.zho.srt");
+                await File.WriteAllTextAsync(primary.Path, "https://example.invalid/video.mkv", TestContext.Current.CancellationToken);
+
+                IFixture fixture = new Fixture().Customize(new AutoMoqCustomization { ConfigureMembers = true });
+                var fileSystem = fixture.Create<ManagedFileSystem>();
+                fixture.Inject<IFileSystem>(fileSystem);
+                var sharedDirectory = new DirectoryService(fileSystem);
+                fixture.Inject<IDirectoryService>(sharedDirectory);
+                Assert.DoesNotContain(subtitle, sharedDirectory.GetFilePaths(directory.FullName));
+                var manager = fixture.Create<MediaSourceManager>();
+                manager.AddParts(Array.Empty<IMediaSourceProvider>());
+
+                var streams = new List<MediaStream> { new() { Index = 0, Type = MediaStreamType.Video } };
+                var mediaSourceManager = Mock.Get(BaseItem.MediaSourceManager);
+                mediaSourceManager.Setup(x => x.GetMediaStreams(primary.Id)).Returns(() => streams);
+                var provider = new Mock<IProviderManager>();
+                provider.Setup(x => x.RefreshSingleItem(primary, It.IsAny<MetadataRefreshOptions>(), It.IsAny<CancellationToken>()))
+                    .Returns((BaseItem _, MetadataRefreshOptions options, CancellationToken _) =>
+                    {
+                        streams = new List<MediaStream> { new() { Index = 0, Type = MediaStreamType.Video } };
+                        if (options.DirectoryService.GetFilePaths(directory.FullName).Contains(subtitle))
+                        {
+                            streams.Add(new MediaStream { Index = 1, Type = MediaStreamType.Subtitle, IsExternal = true, Language = "zho", Path = subtitle });
+                        }
+
+                        return Task.FromResult(ItemUpdateType.MetadataImport);
+                    });
+                BaseItem.ProviderManager = provider.Object;
+
+                await manager.GetPlaybackMediaSources(primary, null!, true, false, TestContext.Current.CancellationToken);
+                await File.WriteAllTextAsync(subtitle, "1\n00:00:01,000 --> 00:00:02,000\n中文字幕\n", TestContext.Current.CancellationToken);
+                for (var i = 0; i < 2; i++)
+                {
+                    var sources = await manager.GetPlaybackMediaSources(primary, null!, true, false, TestContext.Current.CancellationToken);
+                    Assert.Contains(sources.Single(x => x.Id == primary.Id.ToString("N")).MediaStreams, x => x.IsExternal && x.Language == "zho");
+                }
+
+                File.Delete(subtitle);
+                var finalSources = await manager.GetPlaybackMediaSources(primary, null!, true, false, TestContext.Current.CancellationToken);
+                Assert.DoesNotContain(finalSources.Single(x => x.Id == primary.Id.ToString("N")).MediaStreams, x => x.IsExternal);
+            }
+            finally
+            {
+                BaseItem.ProviderManager = previousProviderManager;
+                directory.Delete(true);
+            }
         }
 
         private void SetupUserDataBatch(Dictionary<Guid, UserItemData> userData)

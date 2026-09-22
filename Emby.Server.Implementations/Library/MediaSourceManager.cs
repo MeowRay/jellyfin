@@ -193,8 +193,10 @@ namespace Emby.Server.Implementations.Library
                     ? MetadataRefreshMode.FullRefresh
                     : MetadataRefreshMode.Default;
 
+                // Sidecars can be added or removed between playback requests. The injected
+                // directory service is a singleton and may still contain an old file listing.
                 await item.RefreshMetadata(
-                    new MetadataRefreshOptions(_directoryService)
+                    new MetadataRefreshOptions(new DirectoryService(_fileSystem))
                     {
                         EnableRemoteContentProbe = true,
                         MetadataRefreshMode = refreshMode

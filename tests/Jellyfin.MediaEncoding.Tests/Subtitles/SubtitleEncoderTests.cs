@@ -1,5 +1,13 @@
-using AutoFixture.AutoMoq;
+using System;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Net.Http;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using AutoFixture;
+using AutoFixture.AutoMoq;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller.Configuration;
 using MediaBrowser.Controller.IO;
@@ -10,17 +18,9 @@ using MediaBrowser.Model.Dto;
 using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.IO;
 using MediaBrowser.Model.MediaInfo;
-using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
-using System.Globalization;
-using System.IO;
-using System.Linq;
-using System.Net.Http;
-using System.Text;
-using System.Threading.Tasks;
-using System.Threading;
-using System;
 using Xunit;
 
 namespace Jellyfin.MediaEncoding.Subtitles.Tests
@@ -201,6 +201,7 @@ namespace Jellyfin.MediaEncoding.Subtitles.Tests
                 File.Delete(subtitlePath);
             }
         }
+
         public static TheoryData<Encoding> GetSubtitleStream_NonUtf8LocalFile_TestData()
         {
             return

@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Controller.Persistence;
 using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.MediaInfo;
 using Moq;
@@ -12,6 +13,7 @@ using Xunit;
 
 namespace Jellyfin.Controller.Tests.Entities;
 
+[Collection("LibraryManagerTests")]
 public class FolderVersionScanTests
 {
     [Theory]
@@ -22,8 +24,12 @@ public class FolderVersionScanTests
     {
         var oldLibrary = BaseItem.LibraryManager;
         var oldSources = BaseItem.MediaSourceManager;
+        var oldRepository = BaseItem.ItemRepository;
         try
         {
+            var repository = new Mock<IItemRepository>();
+            repository.Setup(x => x.GetItemList(It.IsAny<InternalItemsQuery>())).Returns(Array.Empty<BaseItem>());
+            BaseItem.ItemRepository = repository.Object;
             var folder = new ScanFolder { Id = Guid.NewGuid(), Path = "/media/movies" };
             var primaryId = Guid.NewGuid();
             var persisted = new Movie
@@ -53,12 +59,15 @@ public class FolderVersionScanTests
         {
             BaseItem.LibraryManager = oldLibrary;
             BaseItem.MediaSourceManager = oldSources;
+            BaseItem.ItemRepository = oldRepository;
         }
     }
 
     private sealed class ScanFolder : Folder
     {
         public IReadOnlyList<BaseItem> Resolved { get; set; } = [];
+
+        public override string GetClientTypeName() => "Folder";
 
         // General library queries hide alternate versions in Jellyfin 12.
         protected override IReadOnlyList<BaseItem> LoadChildren() => [];
